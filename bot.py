@@ -5,6 +5,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 import json
 import os
 from collections import defaultdict
+import asyncio
 
 # Enable logging
 logging.basicConfig(
@@ -36,8 +37,9 @@ class UserReminderManager:
                     for user_id, reminders in data.get('reminders', {}).items():
                         self.user_reminders[int(user_id)] = reminders
                     self.user_paused = defaultdict(bool, {int(k): v for k, v in data.get('paused', {}).items()})
-            except:
-                logger.error("Error loading data")
+                logger.info(f"Loaded data for {len(self.user_reminders)} users")
+            except Exception as e:
+                logger.error(f"Error loading data: {e}")
     
     def save_data(self):
         try:
@@ -47,8 +49,8 @@ class UserReminderManager:
             }
             with open(USER_DATA_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-        except:
-            logger.error("Error saving data")
+        except Exception as e:
+            logger.error(f"Error saving data: {e}")
     
     def set_reminder(self, user_id, reminder_type, end_time):
         self.user_reminders[user_id][reminder_type] = end_time
@@ -179,7 +181,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         job_name = f"{user_id}_{reminder_type}"
         if context.job_queue:
             # Remove existing job
-            for job in context.job_queue.jobs():
+            current_jobs = context.job_queue.jobs()
+            for job in current_jobs:
                 if job.name == job_name:
                     job.schedule_removal()
             
@@ -193,7 +196,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         await query.edit_message_text(
-            MESSAGES['reminder_set'].format(type=interval_desc, interval=interval_desc)
+            MESSAGES['reminder_set'].format(interval=interval_desc)
         )
     
     elif callback_data == 'cancel':
@@ -236,7 +239,8 @@ async def task_done_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Remove job
     job_name = f"{user_id}_{reminder_type}"
     if context.job_queue:
-        for job in context.job_queue.jobs():
+        current_jobs = context.job_queue.jobs()
+        for job in current_jobs:
             if job.name == job_name:
                 job.schedule_removal()
     
@@ -285,7 +289,8 @@ async def stop_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Remove all jobs for this user
     if context.job_queue:
-        for job in context.job_queue.jobs():
+        current_jobs = context.job_queue.jobs()
+        for job in current_jobs:
             if job.name and job.name.startswith(f"{user_id}_"):
                 job.schedule_removal()
     
@@ -293,7 +298,7 @@ async def stop_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Start the bot."""
-    # Create application
+    # Create application with custom builder to avoid the Updater issue
     application = Application.builder().token(TOKEN).build()
     
     # Add command handlers
@@ -309,21 +314,9 @@ def main():
     application.add_handler(CallbackQueryHandler(button_callback, pattern='^(reminder_|cancel)'))
     application.add_handler(CallbackQueryHandler(task_done_callback, pattern='^done_'))
     
-    # Start the bot
-    port = int(os.environ.get('PORT', 8443))
-    
-    # For Render, use webhook or polling
-    if os.environ.get('RENDER'):
-        # Use webhook for Render
-        app_name = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')
-        if app_name:
-            webhook_url = f"https://{app_name}/webhook"
-            application.run_webhook(listen="0.0.0.0", port=port, webhook_url=webhook_url)
-        else:
-            application.run_polling()
-    else:
-        # Use polling for local development
-        application.run_polling()
+    # Start the bot with polling (simpler for Render)
+    logger.info("Starting bot with polling...")
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
